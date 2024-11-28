@@ -1,196 +1,111 @@
-# main.py
-from fastapi import FastAPI, Depends, HTTPException, Security
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from typing import Annotated
+from fastapi import Depends, FastAPI, HTTPException, Query
 from sqlmodel import Field, Session, SQLModel, create_engine, select
-from typing import List, Optional
-import os
-from datetime import datetime
-import bcrypt
-import secrets
-from datetime import datetime
+from datetime import timedelta, datetime
+import config
+import docker
 
-# Database Models
 class Pattern(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    identifier: str = Field(max_length=50, unique=True, index=True)
-    name: str = Field(max_length=255)
-    docker: str = Field(max_length=255)
-    duration: Optional[int] = Field(default=None)
-    author: Optional[str] = Field(default=None, max_length=255)
-    school: Optional[str] = Field(default=None, max_length=255)
-    enabled: bool = Field(default=True)
-    last_run: datetime = Field(
-        sa_column=Column(DateTime(timezone=True), server_default=datetime.utcfromtimestamp(0))
-    ) 
+    identifier: str = Field(index=True, primary_key=True)
+    name: str
+    description: Optional[str] = None
+    source: str
+    docker: str
+    duration: timedelta
+    author: str
+    school: Optional[str] = None
+    enabled: bool = True
+    visible: bool = True
+    last_run: Optional[datetime] = Field(default=datetime.fromtimestamp(0))
 
-class APIKey(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    key_hash: str = Field(index=True)
-    prefix: str = Field(max_length=8)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    is_active: bool = Field(default=True)
-    description: Optional[str] = Field(default=None, max_length=255)
+def create_pattern_from_json(data: Dict[str, Any]) -> Sphere:
+    return Pattern(
+        identifier=data['identifier'],
+        name=data['name'],
+        description=data.get('description', ""),
+        source=data.get('source'),
+        docker=data['docker'],
+        duration=timedelta(seconds=data['duration']),
+        author=data['author'],
+        school=data.get('school', ""),
+        enabled=data.get('enabled', True),
+        visible=data.get('visible', True)
+    )
 
-# Database Configuration
-DATABASE_URL = "sqlite:///./patterns.db"
-engine = create_engine(DATABASE_URL)
-
-# Security
-security = HTTPBearer()
-
-class APIKeyManager:
-    @staticmethod
-    def generate_key() -> tuple[str, str]:
-        """Generate a new API key and its prefix"""
-        key = secrets.token_hex(32)
-        prefix = key[:8]
-        return key, prefix
-
-    @staticmethod
-    def hash_key(key: str) -> str:
-        """Hash the API key using bcrypt"""
-        return bcrypt.hashpw(key.encode(), bcrypt.gensalt()).decode()
-
-    @staticmethod
-    def verify_key(key: str, key_hash: str) -> bool:
-        """Verify if a key matches its hash"""
+async def send_ping(server_addr: str):
+    async with httpx.AsyncClient() as client:
         try:
-            return bcrypt.checkpw(key.encode(), key_hash.encode())
-        except Exception:
-            return False
+            await client.post(f"{server_addr}/runner/state/ping")
+        except Exception as e:
+            print(f"Ping failed: {e}")
 
-def create_db_and_tables():
-    SQLModel.metadata.create_all(engine)
-
-# API Key verification
-def verify_api_key(credentials: HTTPAuthorizationCredentials = Security(security)):
-    key = credentials.credentials
-    prefix = key[:8]
+def start_periodic_ping(app: FastAPI, server_addr: str):
+    async def ping_task():
+        while True:
+            await send_ping(server_addr)
+            await asyncio.sleep(30)
     
-    with Session(engine) as session:
-        stored_key = session.exec(
-            select(APIKey)
-            .where(APIKey.prefix == prefix, APIKey.is_active == True)
-        ).first()
-        
-        if not stored_key or not APIKeyManager.verify_key(key, stored_key.key_hash):
-            raise HTTPException(
-                status_code=401,
-                detail="Invalid or expired API key"
-            )
-        return stored_key
+    @app.on_event("startup")
+    async def startup_event():
+        asyncio.create_task(ping_task())
 
-app = FastAPI(title="Pattern API")
+class DockerDatabase:
+    def __init__(self, engine, session: Session, config):
+        self.engine = engine
+        self.session = session
+        self.client = docker.DockerClient(base_url = config.base_url)
+        self.registry = config.registry_url
 
-@app.on_event("startup")
-async def on_startup():
-    create_db_and_tables()
+    async def sync_patterns(self, server_addr: str):
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.get(f"{server_addr}/runner/patterns")
+                remote_patterns = response.json()
 
-# Pattern Endpoints
-@app.post("/patterns/", response_model=Pattern)
-def create_pattern(
-    pattern: Pattern,
-    current_key: APIKey = Depends(verify_api_key)
-):
-    """Create a new pattern"""
-    with Session(engine) as session:
-        existing = session.exec(
-            select(Pattern).where(Pattern.identifier == pattern.identifier)
-        ).first()
-        if existing:
-            raise HTTPException(
-                status_code=400,
-                detail="Pattern with this identifier already exists"
-            )
-        
-        session.add(pattern)
-        session.commit()
-        session.refresh(pattern)
-        return pattern
+                # Get existing patterns from local DB
+                existing_patterns = self.session.exec(select(Pattern)).all()
+                existing_identifiers = {p.identifier for p in existing_patterns}
+                remote_identifiers = {p['identifier'] for p in remote_patterns}
 
-@app.get("/patterns/", response_model=List[Pattern])
-def read_patterns(
-    skip: int = 0,
-    limit: int = 100,
-    enabled: Optional[bool] = None,
-    current_key: APIKey = Depends(verify_api_key)
-):
-    """Get all patterns with optional filtering"""
-    with Session(engine) as session:
-        query = select(Pattern)
-        if enabled is not None:
-            query = query.where(Pattern.enabled == enabled)
-        patterns = session.exec(query.offset(skip).limit(limit)).all()
-        return patterns
+                # Add or update patterns
+                for pattern_data in remote_patterns:
+                    existing = self.session.exec(
+                        select(Pattern).where(Pattern.identifier == pattern_data['identifier'])
+                    ).first()
 
-@app.get("/patterns/{pattern_id}", response_model=Pattern)
-def read_pattern(
-    pattern_id: int,
-    current_key: APIKey = Depends(verify_api_key)
-):
-    """Get a specific pattern by ID"""
-    with Session(engine) as session:
-        pattern = session.get(Pattern, pattern_id)
-        if not pattern:
-            raise HTTPException(status_code=404, detail="Pattern not found")
-        return pattern
+                    if existing:
+                        # Update existing pattern
+                        for key, value in pattern_data.items():
+                            setattr(existing, key, value)
+                    else:
+                        # Create new pattern
+                        new_pattern = Pattern(**pattern_data)
+                        self.session.add(new_pattern)
 
-@app.get("/patterns/by-identifier/{identifier}", response_model=Pattern)
-def read_pattern_by_identifier(
-    identifier: str,
-    current_key: APIKey = Depends(verify_api_key)
-):
-    """Get a specific pattern by identifier"""
-    with Session(engine) as session:
-        pattern = session.exec(
-            select(Pattern).where(Pattern.identifier == identifier)
-        ).first()
-        if not pattern:
-            raise HTTPException(status_code=404, detail="Pattern not found")
-        return pattern
+                # Remove patterns no longer in remote list
+                for pattern in existing_patterns:
+                    if pattern.identifier not in remote_identifiers:
+                        self.session.delete(pattern)
 
-@app.put("/patterns/{pattern_id}", response_model=Pattern)
-def update_pattern(
-    pattern_id: int,
-    pattern_update: Pattern,
-    current_key: APIKey = Depends(verify_api_key)
-):
-    """Update a pattern"""
-    with Session(engine) as session:
-        pattern = session.get(Pattern, pattern_id)
-        if not pattern:
-            raise HTTPException(status_code=404, detail="Pattern not found")
-        
-        if pattern_update.identifier != pattern.identifier:
-            existing = session.exec(
-                select(Pattern).where(Pattern.identifier == pattern_update.identifier)
-            ).first()
-            if existing:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Pattern with this identifier already exists"
-                )
-        
-        pattern_data = pattern_update.dict(exclude_unset=True)
-        for key, value in pattern_data.items():
-            setattr(pattern, key, value)
-        
-        session.add(pattern)
-        session.commit()
-        session.refresh(pattern)
-        return pattern
+                self.session.commit()
 
-@app.delete("/patterns/{pattern_id}")
-def delete_pattern(
-    pattern_id: int,
-    current_key: APIKey = Depends(verify_api_key)
-):
-    """Delete a pattern"""
-    with Session(engine) as session:
-        pattern = session.get(Pattern, pattern_id)
-        if not pattern:
-            raise HTTPException(status_code=404, detail="Pattern not found")
-        
-        session.delete(pattern)
-        session.commit()
-        return {"message": "Pattern deleted"}
+            except Exception as e:
+                self.session.rollback()
+                print(f"Pattern sync error: {e}")
+    def getNextPattern():
+        earliest_item = session.exec(select(Pattern).order_by(Pattern.last_run).limit(1)).first() 
+        if earliest_item:
+            earliest_item.last_run = datetime.now()
+            session.add(earliest_item)
+            session.commit()
+        return earliest_item
+
+def start_periodic_pattern_sync(app: FastAPI, database_sync: DatabaseSync, server_addr: str):
+    async def pattern_sync_task():
+        while True:
+            await database_sync.sync_patterns(server_addr)
+            await asyncio.sleep(60)  # 1 minute
+    
+    @app.on_event("startup")
+    async def startup_event():
+        asyncio.create_task(pattern_sync_task())
