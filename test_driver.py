@@ -7,12 +7,9 @@ def create_pipe(path):
     Args:
         path (str): Full path where pipe should be created
     """
-    # Ensure directory exists
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    
-    # Create pipe if it doesn't exist
-    if not os.path.exists(path):
-        os.mkfifo(path)
+    if os.path.exists(path):
+        os.remove(path)  
+    os.mkfifo(path, 0o666)
     
     return path
 
@@ -28,4 +25,4 @@ last_time = time.time_ns()
 with open(pipe_path, 'r') as pipe:
     while True:
         # Read line from pipe
-        print(pipe.readline().strip())
+        print("pipe:", pipe.readline().strip())

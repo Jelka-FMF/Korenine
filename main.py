@@ -8,6 +8,10 @@ import docker
 import asyncio, httpx
 from typing import Optional
 import time
+import traceback
+import pytz
+
+utc=pytz.UTC
 
 engine = create_engine("sqlite:///database.db")
 session = Session(engine) 
@@ -30,7 +34,7 @@ class Pattern(SQLModel, table=True):
     school: Optional[str] = None
     enabled: bool = True # Whether to display the pattern in normal rotation (direct runs are still possible)
     visible: bool = True # Whether the pattern is displayed on Jelkob
-    changed: Optional[datetime] = Field(default=datetime.fromtimestamp(0)) #When was the pattern last changed (to be re-pulled)
+    changed: Optional[datetime] = Field(default=utc.localize(datetime.fromtimestamp(0))) #When was the pattern last changed (to be re-pulled)
     last_run: Optional[datetime] = Field(default=datetime.fromtimestamp(0)) #When was the pattern last run (Unix time epoch 0 denotes not being run yet at all)
 
 def create_pattern_from_json(data):
@@ -45,7 +49,7 @@ def create_pattern_from_json(data):
             'school' : data.get('school', ""),
             'enabled' : data.get('enabled', True),
             'visible' : data.get('visible', True),
-            'changed' : datetime.fromisoformat(data.get('changed', datetime.fromtimestamp(0).isoformat())) 
+            'changed' : datetime.fromisoformat(data.get('changed', utc.localize(datetime.fromtimestamp(0)).isoformat()))
             }
 # Stores information for the pattern to be run directly
 class Interruption:
@@ -83,7 +87,7 @@ async def sync_patterns(server_addr: str):
 
                 if existing:
                     # Update existing pattern
-                    if pattern_data.changed > existing.changed:
+                    if datetime.fromisoformat(pattern_data["changed"]) > existing.changed:
                         docker_client.images.pull(pattern_data["docker"])
                     for key, value in create_pattern_from_json(pattern_data).items():
                         setattr(existing, key, value)
@@ -105,6 +109,7 @@ async def sync_patterns(server_addr: str):
         except Exception as e:
             session.rollback()
             print(f"Pattern sync error: {e}")
+            print(traceback.format_exc())
 
 def getNextPattern():
     earliest_item = session.exec(select(Pattern).order_by(Pattern.last_run).limit(1)).first() 
@@ -135,6 +140,7 @@ async def send_runner_state(server_addr: str, pattern_identifier: str):
         return response
 
 async def run_pattern():
+    global interruption
     current_pattern = None
     current_container = None 
     next_pattern, next_container = getNextPattern()
@@ -148,17 +154,20 @@ async def run_pattern():
         start_time = time.time_ns()
         current_container.start()
         send_runner_state(config.server_addr, current_pattern.identifier)
-        while time.time_ns() - start_time < current_pattern["duration"].seconds()*1e9  and not interruption:
+        while time.time_ns() - start_time < current_pattern.duration.seconds*1e9  and not interruption:
             await asyncio.sleep(1)
             current_container.reload()
 
-            if time.time_ns() - start_time + config.load_time*1e9 >= current_pattern["duration"].seconds()*1e9:
+            if time.time_ns() - start_time + config.load_time*1e9 >= current_pattern.duration.seconds*1e9:
                 next_pattern, next_container = getNextPattern()
 
             if not current_container.status == "running":
+                print(current_pattern.name, current_container.status)
+                print(current_container.logs())
                 next_pattern, next_container = getNextPattern()
                 break
-        current_container.kill()
+        if current_container.status == "running":
+            current_container.kill()
 
         if interruption:
             next_pattern = interruption.pattern
@@ -182,6 +191,7 @@ async def lifespan(app: FastAPI):
                 await sync_patterns(config.server_addr)
            except Exception as e:
                 print(f"Ping error: {e}")
+                print(traceback.format_exc())
 
            await asyncio.sleep(60)  # 1 minute
            print("ran sync")
@@ -192,6 +202,7 @@ async def lifespan(app: FastAPI):
                 await send_ping(config.server_addr)
             except Exception as e:
                 print(e) 
+                print(traceback.format_exc())
             await asyncio.sleep(30)
             print("ran ping")
     async def run_task():
@@ -199,6 +210,7 @@ async def lifespan(app: FastAPI):
             await run_pattern()
         except Exception as e:
             print(e)
+            print(traceback.format_exc())
     SQLModel.metadata.create_all(engine)
     sync = asyncio.create_task(pattern_sync_task())
     ping = asyncio.create_task(ping_task())
@@ -220,4 +232,4 @@ async def create_interruption(identifier: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8112)
