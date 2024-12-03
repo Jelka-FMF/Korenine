@@ -11,6 +11,7 @@ docker = "^7.1.0"
 fastapi = {extras = ["standard"], version = "^0.115.5"}
 sqlmodel = "^0.0.22"
 rpi-ws281x = "^5.0.0"
+pytz = "^2024.2"
 
 [tool.poetry.group.dev.dependencies]
 jelkasim = "^1.0.0"

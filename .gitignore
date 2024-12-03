@@ -163,6 +163,5 @@ cython_debug/
 
 # Database
 .db
-.lock
 # Toml
-
+config.py

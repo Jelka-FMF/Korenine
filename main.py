@@ -4,7 +4,7 @@ from typing import Annotated, Optional
 from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.responses import Response
 from sqlmodel import Field, Session, SQLModel, create_engine, select
-from datetime import timedelta, datetime
+from datetime import timedelta, datetime, timezone
 import config
 import docker
 import asyncio, httpx
@@ -13,7 +13,7 @@ import pytz
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('pattern_runner.log'),
@@ -75,6 +75,24 @@ class Interruption:
         self.image = createContainer(self.pattern.docker)
         logger.info(f"Interruption created for pattern: {pattern_name}")
 
+def ensure_utc_timezone(dt):
+    """
+    Check if a datetime is timezone naive and add UTC timezone if so.
+    If the datetime is already timezone-aware, return it as-is.
+    
+    Args:
+        dt (datetime): The input datetime object
+    
+    Returns:
+        datetime: A timezone-aware datetime in UTC
+    """
+    if dt.tzinfo is None:
+        # If timezone is naive, localize to UTC
+        return dt.replace(tzinfo=timezone.utc)
+    
+    # If already timezone-aware, return as-is
+    return dt
+
 # Send Jelkob a ping every 30 seconds, so that Jelkob knows, that Korenine is still alive
 async def send_ping(server_addr: str):
     async with httpx.AsyncClient() as client:
@@ -106,7 +124,7 @@ async def sync_patterns(server_addr: str):
 
                 if existing:
                     # Update existing pattern
-                    if datetime.fromisoformat(pattern_data["changed"]) > existing.changed:
+                    if ensure_utc_timezone(datetime.fromisoformat(pattern_data["changed"])) > ensure_utc_timezone(existing.changed):
                         logger.info(f"Updating pattern: {pattern_data['identifier']}")
                         docker_client.images.pull(pattern_data["docker"])
                     for key, value in create_pattern_from_json(pattern_data).items():
@@ -134,7 +152,7 @@ async def sync_patterns(server_addr: str):
             logger.debug(traceback.format_exc())
 
 def getNextPattern():
-    earliest_item = session.exec(select(Pattern).order_by(Pattern.last_run).limit(1)).first()
+    earliest_item = session.exec(select(Pattern).where(Pattern.enabled == True).order_by(Pattern.last_run).limit(1)).first()
     if earliest_item:
         earliest_item.last_run = datetime.now()
         session.add(earliest_item)
