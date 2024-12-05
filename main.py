@@ -13,10 +13,10 @@ import pytz
 
 # Configure logging
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('pattern_runner.log'),
+        logging.FileHandler('/home/jelka/Korenine/pattern_runner.log'),
         logging.StreamHandler()
     ]
 )
@@ -68,7 +68,7 @@ def create_pattern_from_json(data):
 class Interruption:
     def __init__(self, pattern_name):
         self.pattern_name = pattern_name # Name of pattern to be run
-        self.pattern = session.select(Pattern).where(Pattern.identifier == pattern_name).first()
+        self.pattern = session.exec(select(Pattern).where(Pattern.identifier == pattern_name)).first()
         if not self.pattern:
             logger.error(f"Pattern not found: {pattern_name}")
             raise ValueError(f"Pattern {pattern_name} does not exist")
@@ -212,8 +212,10 @@ async def run_pattern():
 
             start_time = time.time_ns()
             current_container.start()
-            await send_runner_state(config.server_addr, current_pattern.identifier)
-            
+            try:
+                await send_runner_state(config.server_addr, current_pattern.identifier)
+            except:
+                pass
             logger.info(f"Started running pattern: {current_pattern.identifier}")
             
             while (time.time_ns() - start_time < current_pattern.duration.seconds*1e9 and 
@@ -246,6 +248,9 @@ async def run_pattern():
             logger.debug(traceback.format_exc())
             await asyncio.sleep(10)  # Prevent tight error loop
 
+def kill_all_docker_containers():
+    for container in docker_client.containers.list():
+        container.kill()
 from contextlib import asynccontextmanager
 
 @asynccontextmanager
@@ -272,11 +277,13 @@ async def lifespan(app: FastAPI):
             await asyncio.sleep(30)
 
     async def run_task():
-        try:
-            await run_pattern()
-        except Exception as e:
-            logger.error(f"Run task error: {e}")
-            logger.debug(traceback.format_exc())
+        while True:
+            try:
+                kill_all_docker_containers()
+                await run_pattern()
+            except Exception as e:
+                logger.error(f"Run task error: {e}")
+                logger.debug(traceback.format_exc())
 
     SQLModel.metadata.create_all(engine)
     sync = asyncio.create_task(pattern_sync_task())
@@ -307,4 +314,4 @@ async def create_interruption(identifier: str):
 if __name__ == "__main__":
     import uvicorn
     logger.info("Starting Pattern Runner application")
-    uvicorn.run(app, host="0.0.0.0", port=8112)
+    uvicorn.run(app, host="0.0.0.0", port=8080)

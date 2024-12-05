@@ -6,7 +6,7 @@ authors = ["Your Name <you@example.com>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.12"
+python = "^3.11"
 docker = "^7.1.0"
 fastapi = {extras = ["standard"], version = "^0.115.5"}
 sqlmodel = "^0.0.22"
@@ -15,6 +15,9 @@ pytz = "^2024.2"
 
 [tool.poetry.group.dev.dependencies]
 jelkasim = "^1.0.0"
+
+[tools.setuptools]
+packages = ["src"]
 
 [build-system]
 requires = ["poetry-core"]

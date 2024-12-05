@@ -16,7 +16,6 @@ def decode_header(header: str) -> dict:
     >>> decode_header(encode_header(**header)) == dict(header, version=0)
     True
     """
-
     json_header = json.loads(header)
     if "version" not in json_header:
         raise ValueError("Header must contain a version.")
@@ -53,27 +52,8 @@ def decode_frame(frame: str, led_count: int, version: int) -> list:
         (int(frame[i : i + 2], 16), int(frame[i + 2 : i + 4], 16), int(frame[i + 4 : i + 6], 16))
         for i in range(0, len(frame), 6)
     ]
-
-def create_pipe(path):
-    """
-    Create a named pipe at a specific filesystem location
-    
-    Args:
-        path (str): Full path where pipe should be created
-    """
-    # Ensure directory exists
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    
-    # Create pipe if it doesn't exist
-    if not os.path.exists(path):
-        os.mkfifo(path)
-    
-    return path
-
 # Example usage
 pipe_path = '/tmp/jelka'
-created_pipe = create_pipe(pipe_path)
-print(f"Pipe created at: {created_pipe}")
 
 LED_PIN = 18					# GPIO pin connected to the pixels (18 uses PWM!).
 LED_FREQ_HZ = 800000	# LED signal frequency in hertz (usually 800khz)
@@ -89,15 +69,15 @@ last_time = time.time_ns()
 strip = PixelStrip(LED_NUMBER, LED_PIN, LED_FREQ_HZ, LED_DMA, LED_INVERT, LED_BRIGHTNESS, LED_CHANNEL)
 strip.begin()
 
-with open(pipe_name, 'r') as pipe:
+with open(pipe_path, 'r') as pipe:
     while True:
         # Read line from pipe
         line = pipe.readline().strip()
 
         if not line or line[0] != "#":
             continue
-        if line[1] = "{":
-            header = decode_header(line[2:])
+        if line[1] == "{":
+            header = decode_header(line[1:])
             framerate = header["fps"]
             timedifference = 1e9 // framerate
             continue
