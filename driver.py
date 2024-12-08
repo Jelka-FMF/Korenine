@@ -1,7 +1,8 @@
-import os
+import os, sys
 from rpi_ws281x import PixelStrip, Color
 import json
 import time
+import socket
 
 def decode_header(header: str) -> dict:
     """Decodes a header string into a dictionary.
@@ -69,13 +70,19 @@ last_time = time.time_ns()
 strip = PixelStrip(LED_NUMBER, LED_PIN, LED_FREQ_HZ, LED_DMA, LED_INVERT, LED_BRIGHTNESS, LED_CHANNEL)
 strip.begin()
 
+ss = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+ss.bind(("", 0))
+
 with open(pipe_path, 'r') as pipe:
     while True:
         # Read line from pipe
-        line = pipe.readline().strip()
+        line = pipe.readline()
+        ss.sendto(line.encode(), (sys.argv[1] if len(sys.argv) > 1 else "::1", int(sys.argv[2]) if len(sys.argv) > 2 else 53552))
+        line = line.strip()
 
         if not line or line[0] != "#":
             continue
+
         if line[1] == "{":
             header = decode_header(line[1:])
             framerate = header["fps"]
