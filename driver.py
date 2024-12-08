@@ -77,7 +77,7 @@ with open(pipe_path, 'r') as pipe:
     while True:
         # Read line from pipe
         line = pipe.readline()
-        ss.sendto(line.encode(), (sys.argv[1] if len(sys.argv) > 1 else "::1", int(sys.argv[2]) if len(sys.argv) > 2 else 53552))
+        ss.sendto(b"event: message\ndata: " + line.encode() + b"\n", (sys.argv[1] if len(sys.argv) > 1 else "::1", int(sys.argv[2]) if len(sys.argv) > 2 else 53552))
         line = line.strip()
 
         if not line or line[0] != "#":
