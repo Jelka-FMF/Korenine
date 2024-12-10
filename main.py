@@ -230,7 +230,8 @@ async def run_pattern():
                 if not current_container.status == "running":
                     logger.warning(f"Container for {current_pattern.name} stopped. Status: {current_container.status}")
                     logger.debug(f"Container logs: {current_container.logs()}")
-                    next_pattern, next_container = getNextPattern()
+                    if next_pattern == None:
+                        next_pattern, next_container = getNextPattern()
                     break
 
             if current_container.status == "running":
