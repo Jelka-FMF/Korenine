@@ -28,7 +28,7 @@ engine = create_engine("sqlite:///database.db")
 session = Session(engine)
 docker_client = docker.DockerClient(base_url=config.base_url)
 registry = config.registry_url
-mounts = [docker.types.Mount(config.pipe_location, config.pipe_location, type="bind")]
+mounts = [docker.types.Mount(config.pipe_location, config.pipe_location, type="bind"), docker.types.Mount("/app/positions.csv", config.position_location, type="bind", read_only=True )]
 
 # Variable to store unscheduled direct runs from Jelkob
 interruption = None
