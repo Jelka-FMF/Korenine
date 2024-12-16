@@ -13,7 +13,7 @@ import pytz
 
 # Configure logging
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('/home/jelka/Korenine/pattern_runner.log'),
@@ -27,6 +27,7 @@ utc = pytz.UTC
 engine = create_engine("sqlite:///database.db")
 session = Session(engine)
 docker_client = docker.DockerClient(base_url=config.base_url)
+docker_client.login(config.username, config.password, registry=config.registry_url)
 registry = config.registry_url
 mounts = [docker.types.Mount(config.pipe_location, config.pipe_location, type="bind"), docker.types.Mount("/app/positions.csv", config.position_location, type="bind", read_only=True )]
 
@@ -140,7 +141,7 @@ async def sync_patterns(server_addr: str):
             for pattern in existing_patterns:
                 if pattern.identifier not in remote_identifiers:
                     logger.info(f"Removing pattern: {pattern.identifier}")
-                    docker_client.images.remove(pattern.docker)
+                    docker_client.images.remove(pattern.docker, force=True)
                     session.delete(pattern)
 
             session.commit()
@@ -149,6 +150,7 @@ async def sync_patterns(server_addr: str):
         except Exception as e:
             session.rollback()
             logger.error(f"Pattern sync error: {e}")
+            logger.info("Pattern synchronization wasn't completed")
             logger.debug(traceback.format_exc())
 
 def getNextPattern(current_pattern = None):
@@ -260,7 +262,7 @@ async def run_pattern():
 
                 if not current_container.status == "running":
                     logger.warning(f"Container for {current_pattern.name} stopped. Status: {current_container.status}")
-                    logger.debug(f"Container logs: {current_container.logs()}")
+                    logger.warning(f"Container logs: {current_container.logs()}")
                     if next_pattern == None:
                         next_pattern, next_container = getNextPattern(current_pattern)
                     break
