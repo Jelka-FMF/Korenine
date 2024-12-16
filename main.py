@@ -13,7 +13,7 @@ import pytz
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('/home/jelka/Korenine/pattern_runner.log'),
@@ -151,17 +151,48 @@ async def sync_patterns(server_addr: str):
             logger.error(f"Pattern sync error: {e}")
             logger.debug(traceback.format_exc())
 
-def getNextPattern():
-    earliest_item = session.exec(select(Pattern).where(Pattern.enabled == True).order_by(Pattern.last_run).limit(1)).first()
-    if earliest_item:
-        earliest_item.last_run = datetime.now()
-        session.add(earliest_item)
-        session.commit()
-        logger.info(f"Selected next pattern: {earliest_item.identifier}")
-        return earliest_item, createContainer(earliest_item.docker)
-    else:
-        logger.warning("No patterns available to run")
-        return None, None
+def getNextPattern(current_pattern = None):
+    if not current_pattern:
+        earliest_item = session.exec(select(Pattern).where(Pattern.enabled == True).order_by(Pattern.last_run).limit(1)).first()
+        if earliest_item:
+            earliest_item.last_run = datetime.now()
+            session.add(earliest_item)
+            session.commit()
+            logger.info(f"Selected next pattern by time: {earliest_item.identifier}")
+            return earliest_item, createContainer(earliest_item.docker)
+        else:
+            logger.warning("No patterns available to run")
+            return None, None
+    else: 
+        # Find the next pattern alphabetically after the current pattern
+        next_pattern = session.exec(
+            select(Pattern)
+            .where(
+                Pattern.enabled == True, 
+                Pattern.identifier > current_pattern.identifier
+            )
+            .order_by(Pattern.identifier)
+            .limit(1)
+        ).first()
+        
+        # If no next pattern, loop back to the first pattern alphabetically
+        if not next_pattern:
+            next_pattern = session.exec(
+                select(Pattern)
+                .where(Pattern.enabled == True)
+                .order_by(Pattern.identifier)
+                .limit(1)
+            ).first()
+        
+        if next_pattern:
+            next_pattern.last_run = datetime.now()
+            session.add(next_pattern)
+            session.commit()
+            logger.info(f"Selected next pattern by letter: {next_pattern.identifier}")
+            return next_pattern, createContainer(next_pattern.docker)
+        else:
+            logger.warning("No patterns available to run")
+            return None, None
 
 def createContainer(container_name: str):
     try:
@@ -225,13 +256,13 @@ async def run_pattern():
 
                 if (time.time_ns() - start_time + config.load_time*1e9 >= 
                     current_pattern.duration.seconds*1e9) and next_pattern == None:
-                    next_pattern, next_container = getNextPattern()
+                    next_pattern, next_container = getNextPattern(current_pattern)
 
                 if not current_container.status == "running":
                     logger.warning(f"Container for {current_pattern.name} stopped. Status: {current_container.status}")
                     logger.debug(f"Container logs: {current_container.logs()}")
                     if next_pattern == None:
-                        next_pattern, next_container = getNextPattern()
+                        next_pattern, next_container = getNextPattern(current_pattern)
                     break
 
             if current_container.status == "running":
