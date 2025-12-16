@@ -1,0 +1,137 @@
+---
+- name: Configure Jelka System
+  hosts: localhost
+  become: true
+  vars:
+    user_name: "jelka"
+    home_dir: "/home/jelka"
+    repo_dir: "/home/jelka/Korenine"
+    # REPLACE THIS with your actual repository URL
+    repo_url: "https://github.com/your-username/your-repo.git" 
+    
+    # Path to boot config (Use /boot/config.txt for older RPi OS, /boot/firmware/config.txt for Bookworm)
+    boot_config_path: "/boot/firmware/config.txt"
+
+  tasks:
+    # ---------------------------------------------------------
+    # 1. Install System Packages
+    # ---------------------------------------------------------
+    - name: Update apt cache and install packages
+      apt:
+        name:
+          - git
+          - neovim
+          - curl
+          - python3-pip
+          - python3-venv
+        state: present
+        update_cache: yes
+
+    # ---------------------------------------------------------
+    # 2. Setup Hardware Configuration (config.txt)
+    # ---------------------------------------------------------
+    - name: Add WS2812 overlays to config.txt
+      blockinfile:
+        path: "{{ boot_config_path }}"
+        marker: "# {mark} ANSIBLE MANAGED BLOCK (JELKA LEDS)"
+        block: |
+          dtoverlay=ws2812-pio,gpio=18,num_leds=500
+          dtoverlay=ws2812-pio,gpio=19,num_leds=500
+      register: config_changed
+
+    # ---------------------------------------------------------
+    # 3. Clone Repository
+    # ---------------------------------------------------------
+    - name: Ensure repository directory exists
+      file:
+        path: "{{ repo_dir }}"
+        state: directory
+        owner: "{{ user_name }}"
+        group: "{{ user_name }}"
+
+    - name: Clone git repository
+      git:
+        repo: "{{ repo_url }}"
+        dest: "{{ repo_dir }}"
+        version: main
+        force: yes
+      become_user: "{{ user_name }}"
+
+    # ---------------------------------------------------------
+    # 4. Install UV (if not found)
+    # ---------------------------------------------------------
+    - name: Check if uv is installed
+      stat:
+        path: "{{ home_dir }}/.local/bin/uv"
+      register: uv_bin
+
+    - name: Install uv via installer script
+      shell: "curl -LsSf https://astral.sh/uv/install.sh | sh"
+      become_user: "{{ user_name }}"
+      when: not uv_bin.stat.exists
+
+    # ---------------------------------------------------------
+    # 5. Create Systemd Services
+    # ---------------------------------------------------------
+    - name: Create Driver Service (Root + FIFO)
+      copy:
+        dest: /etc/systemd/system/jelka-driver.service
+        content: |
+          [Unit]
+          Description=Jelka Driver Service
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=root
+          WorkingDirectory={{ repo_dir }}
+          ExecStartPre=/usr/bin/rm -f /tmp/jelka
+          ExecStartPre=/usr/bin/mkfifo /tmp/jelka
+          ExecStartPre=/usr/bin/chmod 0777 /tmp/jelka
+          ExecStart=/usr/bin/python3 -u {{ repo_dir }}/driver.py
+          Restart=on-failure
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Create Main Service (User Jelka + UV)
+      copy:
+        dest: /etc/systemd/system/jelka-main.service
+        content: |
+          [Unit]
+          Description=Jelka Main Service
+          After=jelka-driver.service
+
+          [Service]
+          Type=simple
+          User={{ user_name }}
+          Group={{ user_name }}
+          WorkingDirectory={{ repo_dir }}
+          Environment=PYTHONUNBUFFERED=1
+          # We know the path because we installed it to the default location
+          ExecStart={{ home_dir }}/.local/bin/uv run main.py
+          Restart=on-failure
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Reload systemd and enable services
+      systemd:
+        daemon_reload: yes
+        name: "{{ item }}"
+        enabled: yes
+        state: restarted
+      loop:
+        - jelka-driver
+        - jelka-main
+
+  # ---------------------------------------------------------
+  # Final Output
+  # ---------------------------------------------------------
+  post_tasks:
+    - name: Reboot warning
+      debug:
+        msg: "Config.txt was modified. A REBOOT IS REQUIRED for LED configuration to take effect!"
+      when: config_changed.changed

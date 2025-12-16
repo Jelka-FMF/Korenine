@@ -1,24 +1,13 @@
-[tool.poetry]
+[project]
 name = "korenine"
 version = "0.1.0"
-description = "System for running and displaying animations on WS2811 based Christmass tree"
-authors = ["Your Name <you@example.com>"]
+description = "Add your description here"
 readme = "README.md"
-
-[tool.poetry.dependencies]
-python = "^3.11"
-docker = "^7.1.0"
-fastapi = {extras = ["standard"], version = "^0.115.5"}
-sqlmodel = "^0.0.22"
-rpi-ws281x = "^5.0.0"
-pytz = "^2024.2"
-
-[tool.poetry.group.dev.dependencies]
-jelkasim = "^1.0.0"
-
-[tools.setuptools]
-packages = ["src"]
-
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires-python = ">=3.13"
+dependencies = [
+    "docker>=7.1.0",
+    "httpx>=0.28.1",
+    "numpy>=2.3.5",
+    "pytz>=2025.2",
+    "sqlmodel>=0.0.27",
+]

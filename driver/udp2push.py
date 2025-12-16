@@ -6,7 +6,7 @@ import datetime
 import logging
 import os
 
-def setup_logging(log_level=logging.INFO, log_file=None):
+def setup_logging(log_level=logging.DEBUG, log_file=None):
     """
     Configure logging with optional file output and console logging.
     
@@ -50,7 +50,7 @@ def main():
     
     # Optional log file
     log_file = sys.argv[5] if len(sys.argv) > 5 else None
-    setup_logging(log_file=log_file)
+    setup_logging(logging.DEBUG, log_file=log_file)
     
     # Log startup information
     logging.info(f"Starting UDP forwarding service")
