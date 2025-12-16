@@ -73,7 +73,7 @@ with open(pipe_path, 'r') as pipe:
             time.sleep(0.1)
             continue
 
-        ss.sendto(b"event: message\ndata: " + line.encode() + b"\n", "65536")
+        # ss.sendto(b"event: message\ndata: " + line.encode() + b"\n", 65536)
         line = line.strip()
         # Skip lines that don't start with #
         if not line or line[0] != "#":

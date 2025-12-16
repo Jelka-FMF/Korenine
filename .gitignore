@@ -166,3 +166,5 @@ cython_debug/
 # Toml
 config.py
 .python-version
+*.csv
+*.backup

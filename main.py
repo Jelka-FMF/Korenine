@@ -33,6 +33,7 @@ mounts = [
     docker.types.Mount(config.pipe_location, config.pipe_location, type="bind"), 
     docker.types.Mount("/app/positions.csv", config.position_location, type="bind", read_only=True)
 ]
+environment = {"JELKA_POSITIONS": "/app/positions.csv"}
 
 # Variable to store unscheduled direct runs from Jelkob
 interruption = None
@@ -75,6 +76,7 @@ def createContainer(container_name: str):
             mem_limit=config.mem_limit,
             mounts=mounts,
             network_mode="host",
+            environment=environment,
             detach=True
         )
         logger.info(f"Created container for image: {container_name}")
