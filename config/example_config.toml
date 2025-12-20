@@ -1,0 +1,21 @@
+# --- Manager Settings ---
+server_addr = ""
+token = ""
+docker_socket = "unix:///var/run/docker.sock"
+position_location = "/home/jelka/Korenine/data/positions.csv"
+db_url = "sqlite:data/database.db"
+load_time_secs = 10
+registry_user = ""
+registry_pass = ""
+
+# --- Driver Settings ---
+ws_url = ""
+auth_token = ""
+led_count = 1000
+leds_per_device = 500
+# The driver reads FROM here. The manager's throttler writes TO here.
+global_pipe = "/tmp/jelka"
+# List of hardware devices
+devices = ["/dev/leds0", "/dev/leds1"]
+
+
