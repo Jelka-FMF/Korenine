@@ -169,4 +169,4 @@ config.py
 .python-version
 *.csv
 *.backup
-Config.toml
+config.toml
