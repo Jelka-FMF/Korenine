@@ -164,6 +164,8 @@ cython_debug/
 
 # Database
 *.db
+*.db-shm
+*.db-wal
 # Toml
 config.py
 .python-version
